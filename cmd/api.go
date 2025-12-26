@@ -1,6 +1,11 @@
 package main
 
 import (
+	"database/sql"
+	repositories "github/budiharyonoo/ecom-tiago/internal/adapters/mysql/sqlc"
+	"github/budiharyonoo/ecom-tiago/internal/orders"
+	"github/budiharyonoo/ecom-tiago/internal/products"
+	env "github/budiharyonoo/ecom-tiago/internal/utils"
 	"log"
 	"log/slog"
 	"net/http"
@@ -15,6 +20,7 @@ import (
 
 type app struct {
 	config config
+	db     *sql.DB
 }
 
 type config struct {
@@ -30,14 +36,18 @@ func (app *app) mount() http.Handler {
 	r := chi.NewRouter()
 
 	// logger setup
-	isLocalhost := true
+	appEnv := env.GetString("APP_ENV", "production")
+	appName := env.GetString("APP_NAME", "ecom-tiago")
+	appVersion := env.GetString("APP_VERSION", "v1.0.0")
+
+	isLocalhost := env.GetString("APP_ENV", "production") == "local"
 	logFormat := httplog.SchemaECS.Concise(isLocalhost)
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		ReplaceAttr: logFormat.ReplaceAttr,
 	})).With(
-		slog.String("app", "ecom-tiago"),
-		slog.String("version", "v0.0.1"),
-		slog.String("env", "local"))
+		slog.String("app", appName),
+		slog.String("version", appVersion),
+		slog.String("env", appEnv))
 	slog.SetDefault(logger)
 
 	// load middlewares
@@ -87,16 +97,29 @@ func (app *app) mount() http.Handler {
 		// Optionally, enable logging of request/response body based on custom conditions.
 		// Useful for debugging payload issues in development.
 		LogRequestBody: func(r *http.Request) bool {
-			return true
+			return isLocalhost
 		},
 		LogResponseBody: func(r *http.Request) bool {
-			return true
+			return isLocalhost
 		},
 	}))
 
 	// routes
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("all good"))
+	})
+
+	productService := products.NewService(repositories.New(app.db))
+	productHandler := products.NewHandler(productService)
+	r.Route("/products", func(r chi.Router) {
+		r.Get("/", productHandler.List)
+		r.Get("/{id}", productHandler.GetById)
+	})
+
+	orderService := orders.NewService(repositories.New(app.db), app.db)
+	orderHandler := orders.NewHandler(orderService)
+	r.Route("/orders", func(r chi.Router) {
+		r.Post("/", orderHandler.Store)
 	})
 
 	return r
